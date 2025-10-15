@@ -118,6 +118,25 @@ def plot_entropy_trace(token_trace, model_name, save_dir):
     plt.close()
     print(f"✅ Saved entropy plot: {out_path}")
 
+def plot_expert_usage_count(expert_counts, model_name, save_dir):
+    """Visualize absolute expert usage frequency (no normalization or log scale)."""
+    plt.figure(figsize=(10, 6))
+    sns.heatmap(
+        expert_counts.numpy(),
+        cmap="YlGnBu",
+        xticklabels=[f"E{i}" for i in range(expert_counts.shape[1])],
+        yticklabels=[f"L{i}" for i in range(expert_counts.shape[0])],
+        cbar_kws={"label": "Number of tokens routed"},
+    )
+    plt.title(f"Absolute Expert Usage per Layer — {model_name}")
+    plt.xlabel("Expert ID")
+    plt.ylabel("Layer")
+    plt.tight_layout()
+    out_path = os.path.join(save_dir, "expert_usage_counts.png")
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+    print(f"✅ Saved expert usage count map: {out_path}")
+
 def plot_expert_sparsity(expert_counts, model_name, save_dir):
     counts_norm = expert_counts / (expert_counts.sum(dim=1, keepdim=True) + 1e-8)
     counts_log = torch.log10(counts_norm + 1e-6)
@@ -152,6 +171,7 @@ def main(args):
 
     plot_expert_heatmap(expert_counts, args.model_name, args.results_dir)
     plot_expert_bar(expert_counts, args.model_name, args.results_dir)
+    plot_expert_usage_count(expert_counts, args.model_name, args.results_dir)
     plot_expert_sparsity(expert_counts, args.model_name, args.results_dir)
 
     if token_trace:
