@@ -25,7 +25,7 @@
   "deepseek-ai/DeepSeek-V2": {
     "router_key": "router_probs",
     "num_hidden_layers": 60,
-    "num_routed_experts": 64,
+    "num_routed_experts": 160,
     "outputs_logits": false,
     "num_experts_per_token": 6
   },
