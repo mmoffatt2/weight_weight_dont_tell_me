@@ -173,8 +173,8 @@ def dump_routing_trace(args):
                     continue
                 router_tensor = tensors[-1]  # last recorded batch
 
-                probs = torch.softmax(router_tensor, dim=-1)
-                topk_values, topk_indices = torch.topk(probs, k=top_k, dim=-1)
+                # probs = torch.softmax(router_tensor, dim=-1)
+                # topk_values, topk_indices = torch.topk(probs, k=top_k, dim=-1)
 
                 # Handle both logits and integer expert IDs
                 if router_tensor.dtype in (torch.float16, torch.float32, torch.bfloat16):
