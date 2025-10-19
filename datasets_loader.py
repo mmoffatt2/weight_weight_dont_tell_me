@@ -133,16 +133,27 @@ def get_dataset_samples(name, tokenizer, seqlen, nsamples):
     # --------------------------------------------------------------------------
     # Tokenize and pad/truncate to uniform sequence length
     # --------------------------------------------------------------------------
-    enc = tokenizer(
-        text_list,
-        return_tensors="pt",
-        truncation=True,
-        padding=True,
-        max_length=seqlen,
-    )
+    # enc = tokenizer(
+    #     text_list,
+    #     return_tensors="pt",
+    #     truncation=True,
+    #     padding=False,
+    #     max_length=seqlen,
+    # )
+
+    # dataset = [
+    #     {"input_ids": inp, "attention_mask": mask}
+    #     for inp, mask in zip(enc["input_ids"], enc["attention_mask"])
+    # ]
+
+    encodings = [tokenizer(t, return_tensors="pt", truncation=True, padding=False, max_length=seqlen)
+             for t in text_list]
+
+    # print([e["input_ids"].shape for e in encodings])
 
     dataset = [
-        {"input_ids": inp, "attention_mask": mask}
-        for inp, mask in zip(enc["input_ids"], enc["attention_mask"])
+        {"input_ids": e["input_ids"].squeeze(0), "attention_mask": e["attention_mask"].squeeze(0)}
+        for e in encodings
     ]
+
     return dataset
