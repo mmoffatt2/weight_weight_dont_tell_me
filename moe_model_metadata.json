@@ -51,18 +51,18 @@
     "outputs_logits": true,
     "num_experts_per_token": 2
   },
-  "microsoft/Phi-3.5-MoE-instruct": {
-    "router_key": "router_probs",
+  "openai/gpt-oss-20b": {
+    "router_key": null,
     "num_hidden_layers": 24,
-    "num_routed_experts": 8,
+    "num_routed_experts": 32,
     "outputs_logits": false,
-    "num_experts_per_token": 2
+    "num_experts_per_token": 4
   },
-  "Yi-1.5-MoE-9B": {
-    "router_key": "router_logits",
-    "num_hidden_layers": 32,
-    "num_routed_experts": 16,
-    "outputs_logits": true,
-    "num_experts_per_token": 2
-  }
+  "openai/gpt-oss-120b": {
+    "router_key": null,
+    "num_hidden_layers": 36,
+    "num_routed_experts": 128,
+    "outputs_logits": false,
+    "num_experts_per_token": 4
+  },
 }
