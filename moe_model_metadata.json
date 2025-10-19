@@ -64,5 +64,5 @@
     "num_routed_experts": 128,
     "outputs_logits": false,
     "num_experts_per_token": 4
-  },
+  }
 }
