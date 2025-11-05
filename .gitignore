@@ -1,0 +1,4 @@
+*.out
+*.lock
+.venv/*
+.cache/*
