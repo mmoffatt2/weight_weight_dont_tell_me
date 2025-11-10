@@ -20,9 +20,9 @@ import numpy as np
 
 
 TASK_ALIASES = {
-    "gsm8k": ["gsm8k_cot"],
+    "gsm8k": ["gsm8k"],
     "wikitext2": ["wikitext"],
-    "wmt14": ["flores_101.de-en"],
+    "wmt2016": ["wmt2016"],
     "humaneval": ["humaneval"],
 }
 

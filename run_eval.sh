@@ -1,9 +1,9 @@
 #!/bin/bash
 
-#SBATCH --job-name=moe-lm-eval
+#SBATCH --job-name=lm-eval-mixtral
 #SBATCH --account=cse585f25_class
 #SBATCH --partition=gpu_mig40
-#SBATCH --time=04:00:00
+#SBATCH --time=01:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --mem=120g
@@ -30,35 +30,27 @@ export HF_HOME="/scratch/cse585f25_class_root/cse585f25_class/tymiao/.cache"
 export HF_DATASETS_CACHE="${HF_HOME}/datasets"
 
 MODEL_NAME="mistralai/Mixtral-8x7B-Instruct-v0.1"
-MODEL_REVISION="main"
-DATASET="wmt2016"
-NUM_FEWSHOT=0
-LIMIT=256
-OUTPUT_DIR="results_wmt2016"
+TASKS="wmt-ro-en-t5-prompt"
+BATCH_SIZE=1
+LIMIT=128
 
-mkdir -p "${OUTPUT_DIR}"
 mkdir -p "${HF_HOME}"
 mkdir -p "${HF_DATASETS_CACHE}"
 
-echo "[`date '+%Y-%m-%d %H:%M:%S'`] Launching moe_eval with model=${MODEL_NAME}, dataset=${DATASET}, limit=${LIMIT}"
+echo "[`date '+%Y-%m-%d %H:%M:%S'`] Running lm_eval with model=${MODEL_NAME}, tasks=${TASKS}"
 
-uv run python moe_eval.py \
-    --model "${MODEL_NAME}" \
-    --dataset "${DATASET}" \
-    --revision "${MODEL_REVISION}" \
+uv run python run_lm_eval.py \
+    --model hf \
+    --model_args "pretrained=${MODEL_NAME}" \
+    --tasks "${TASKS}" \
+    --batch_size ${BATCH_SIZE} \
     --limit ${LIMIT} \
-    --num_fewshot ${NUM_FEWSHOT} \
-    --load_in_4bit \
-    --dtype bfloat16 \
-    --device_map auto \
-    --trust_remote_code \
-    --output "${OUTPUT_DIR}/${SLURM_JOB_ID:-manual_run}_metrics.json"
+    --load_in_4bit
 
 status=$?
 
 if [ ${status} -eq 0 ]; then
-    echo "[`date '+%Y-%m-%d %H:%M:%S'`] moe_eval completed successfully."
-    echo "[`date '+%Y-%m-%d %H:%M:%S'`] Results saved to ${OUTPUT_DIR}/${SLURM_JOB_ID:-manual_run}_metrics.json"
+    echo "[`date '+%Y-%m-%d %H:%M:%S'`] lm_eval completed successfully."
 else
-    echo "[`date '+%Y-%m-%d %H:%M:%S'`] moe_eval exited with status ${status}."
+    echo "[`date '+%Y-%m-%d %H:%M:%S'`] lm_eval exited with status ${status}."
 fi
