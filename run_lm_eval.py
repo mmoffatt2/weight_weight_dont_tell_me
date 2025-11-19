@@ -15,7 +15,12 @@ parser.add_argument("--model_args", type=str, required=True)
 parser.add_argument("--tasks", type=str, required=True)
 parser.add_argument("--batch_size", type=int, default=8)
 parser.add_argument("--limit", type=int, default=None)
-parser.add_argument("--num_fewshot", type=int, default=0)
+parser.add_argument(
+    "--num_fewshot",
+    type=int,
+    default=None,
+    help="Few-shot count; leave unset to use each task's default",
+)
 parser.add_argument("--load_in_4bit", action=argparse.BooleanOptionalAction, default=False, help="Enable or disable 4-bit quantization")
 parser.add_argument("--load_in_8bit", action=argparse.BooleanOptionalAction, default=False, help="Enable or disable 8-bit quantization")
 parser.add_argument("--trust_remote_code", action=argparse.BooleanOptionalAction, default=False, help="Enable or disable trust remote code")
@@ -31,14 +36,18 @@ if args.trust_remote_code:
     model_args += ",trust_remote_code=True"
 
 # Run evaluation
-results = lm_eval.simple_evaluate(
+evaluate_kwargs = dict(
     model=args.model,
     model_args=model_args,
     tasks=args.tasks.split(","),
     batch_size=args.batch_size,
     limit=args.limit,
-    num_fewshot=args.num_fewshot,
 )
+# Only override the task default if explicitly provided.
+if args.num_fewshot is not None:
+    evaluate_kwargs["num_fewshot"] = args.num_fewshot
+
+results = lm_eval.simple_evaluate(**evaluate_kwargs)
 
 # Print results
 # print("\nResults:")
