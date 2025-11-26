@@ -1,0 +1,3 @@
+[submodule "external/MoE-Quantization"]
+	path = external/MoE-Quantization
+	url = https://github.com/mmoffatt2/MoE-Quantization.git

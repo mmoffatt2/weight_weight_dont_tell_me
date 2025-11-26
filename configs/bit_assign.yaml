@@ -1,0 +1,13 @@
+mode: global_bottom_k   # or: "usage_bit_assign"
+
+# Controls how usage is mapped to bits.
+usage_bit_assign:
+  top_percentile: 1.00   # experts above this usage -> high_bits
+  low_percentile: 0.05   # experts below this usage -> low_bits
+  high_bits: 16
+  mid_bits: 16
+  low_bits: 8
+global_bottom_k:
+  k: 50          # quantize K lowest-usage experts in entire model
+  low_bits: 8    # quantized bits
+  high_bits: 16  # full precision (model will treat >8bits as fp16)

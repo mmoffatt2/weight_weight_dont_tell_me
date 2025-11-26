@@ -17,7 +17,7 @@ import argparse
 from collections import defaultdict
 
 import torch
-from datasets_loader import get_dataset_samples, Dataset
+from utils.datasets_loader import get_dataset_samples, Dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import (
