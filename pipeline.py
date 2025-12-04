@@ -33,6 +33,10 @@ def main():
     parser.add_argument("--quant_seqlen", type=int, default=2048)
     parser.add_argument("--group_size", type=int, default=128)
     parser.add_argument("--bit_config", type=str, default="configs/bit_assign.yaml")
+    parser.add_argument("--top-k", type=int, default=None, 
+                        help="Number of lowest-usage experts to quantize (overrides k in bit_assign.yaml)")
+    parser.add_argument("--low-bits", type=int, default=None,
+                        help="Number of bits for low-precision experts (overrides low_bits in bit_assign.yaml)")
 
     # ---- Eval (lm_eval)
     parser.add_argument("--eval_tasks", type=str, default="wikitext")
@@ -48,7 +52,22 @@ def main():
     args = parser.parse_args()
 
     model_short = args.model_name.split("/")[-1]
-    run_dir = Path(args.output_root) / model_short
+    
+    # Load bit config to get k value
+    import yaml
+    with open(args.bit_config, 'r') as f:
+        bit_config = yaml.safe_load(f)
+    
+    # Determine k: use --top-k if provided, otherwise use k from config
+    if args.top_k is not None:
+        k_experts_to_quant = args.top_k
+    else:
+        k_experts_to_quant = bit_config.get('global_bottom_k', {}).get('k', 0)
+    
+    # Build run directory name with dataset and number of quantized experts
+    run_dir_name = f"{model_short}_{args.trace_dataset}_{k_experts_to_quant}experts"
+    
+    run_dir = Path(args.output_root) / run_dir_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
     expert_counts = run_dir / f"{model_short}_expert_counts.pt"
@@ -77,42 +96,47 @@ def main():
     # 2. Quantization
     # -----------------------------------------------------
     if not args.skip_quant:
-        run(
-            [
-                sys.executable,
-                "quantization/usage_aware_quantization.py",
-                "--model_name", args.model_name,
-                "--expert_counts", str(expert_counts),
-                "--output_dir", str(quant_out),
-                "--dataset", args.quant_dataset,
-                "--seqlen", str(args.quant_seqlen),
-                "--nsamples", str(args.quant_nsamples),
-                "--group_size", str(args.group_size),
-                "--bit_config", args.bit_config,
-            ],
-            "Running usage-aware quantization",
-        )
+        quant_cmd = [
+            sys.executable,
+            "quantization/usage_aware_quantization.py",
+            "--model_name", args.model_name,
+            "--expert_counts", str(expert_counts),
+            "--output_dir", str(quant_out),
+            "--dataset", args.quant_dataset,
+            "--seqlen", str(args.quant_seqlen),
+            "--nsamples", str(args.quant_nsamples),
+            "--group_size", str(args.group_size),
+            "--bit_config", args.bit_config,
+        ]
+        
+        # Add --k override if provided
+        if args.top_k is not None:
+            quant_cmd.extend(["--k", str(args.top_k)])
+        
+        # Add --low-bits override if provided
+        if args.low_bits is not None:
+            quant_cmd.extend(["--low-bits", str(args.low_bits)])
+        
+        run(quant_cmd, "Running usage-aware quantization")
 
     # -----------------------------------------------------
     # 3. Evaluation (lm_eval)
     # -----------------------------------------------------
     if not args.skip_eval:
-        model_args = f"pretrained={quant_out},trust_remote_code=True"
-        run(
-            [
-                sys.executable,
-                "eval/run_lm_eval.py",
-                "--model", "hf",
-                "--model_args", model_args,
-                "--tasks", args.eval_tasks,
-                "--batch_size", str(args.eval_batch_size),
-                "--num_fewshot", str(args.num_fewshot),
-                "--load_in_4bit", "False",
-                "--load_in_8bit", "False",
-            ]
-            + (["--limit", str(args.eval_limit)] if args.eval_limit else []),
-            "Running lm_eval",
-        )
+        eval_cmd = [
+            sys.executable,
+            "eval/eval_usage_aware_quantized.py",
+            "--model_name", args.model_name,
+            "--quant_model_path", str(quant_out),
+            "--tasks", args.eval_tasks,
+            "--batch_size", str(args.eval_batch_size),
+        ]
+        # Only add num_fewshot if explicitly set
+        if args.num_fewshot is not None:
+            eval_cmd.extend(["--num_fewshot", str(args.num_fewshot)])
+        eval_cmd.extend(["--output_dir", str(run_dir)])
+        
+        run(eval_cmd, "Running usage-aware evaluation")
 
     print("\n✅ Pipeline complete.")
 

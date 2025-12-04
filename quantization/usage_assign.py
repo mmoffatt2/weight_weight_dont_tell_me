@@ -17,22 +17,39 @@ def load_usage_assign_config(path: str = "configs/bit_assign.yaml") -> Dict:
 def assign_bits_from_usage(
     expert_counts: torch.Tensor,
     config_path: str = "configs/bit_assign.yaml",
+    k_override: int = None,
+    low_bits_override: int = None,
 ) -> List[List[int]]:
     """
     Unified dispatcher: chooses which quantization strategy
     to use based on config file.
 
     expert_counts: Tensor [num_layers, num_experts]
+    k_override: If provided, overrides the k value in global_bottom_k mode
+    low_bits_override: If provided, overrides the low_bits value
     return: bits[layer][expert]
     """
     cfg = load_usage_assign_config(config_path)
     mode = cfg.get("mode", "usage_bit_assign")
 
     if mode == "usage_bit_assign":
-        return _assign_bits_percentile(expert_counts, cfg["usage_bit_assign"])
+        # Override low_bits if provided
+        percentile_cfg = cfg["usage_bit_assign"].copy()
+        if low_bits_override is not None:
+            print(f"   🔧 Overriding low_bits from config ({percentile_cfg.get('low_bits')}) with {low_bits_override}")
+            percentile_cfg["low_bits"] = low_bits_override
+        return _assign_bits_percentile(expert_counts, percentile_cfg)
 
     elif mode == "global_bottom_k":
-        return _assign_bits_global_bottom_k(expert_counts, cfg["global_bottom_k"])
+        # Override k and/or low_bits if provided
+        bottom_k_cfg = cfg["global_bottom_k"].copy()
+        if k_override is not None:
+            print(f"   🔧 Overriding k from config ({bottom_k_cfg.get('k')}) with {k_override}")
+            bottom_k_cfg["k"] = k_override
+        if low_bits_override is not None:
+            print(f"   🔧 Overriding low_bits from config ({bottom_k_cfg.get('low_bits')}) with {low_bits_override}")
+            bottom_k_cfg["low_bits"] = low_bits_override
+        return _assign_bits_global_bottom_k(expert_counts, bottom_k_cfg)
 
     else:
         raise ValueError(f"Unknown bit assignment mode: {mode}")

@@ -9,7 +9,7 @@ from transformers import AutoTokenizer
 # ---- Local imports
 from quantization.usage_assign import assign_bits_from_usage
 from quantization.calibration_inspector import inspect_calibration_dataset
-from quantization.build_bitdict import build_deepseek_bitdict
+from quantization.build_bitdict import build_deepseek_bitdict, build_mixtral_bitdict
 from utils.datasets_loader import get_dataset_samples
 
 # ---- Optional MoE-Quantization import (Option A)
@@ -34,6 +34,10 @@ def main():
 
     # Bit assignment
     parser.add_argument("--bit_config", type=str, default="configs/bit_assign.yaml")
+    parser.add_argument("--k", type=int, default=None, 
+                        help="Override k in bit_config for global_bottom_k mode (number of experts to quantize)")
+    parser.add_argument("--low-bits", type=int, default=None,
+                        help="Override low_bits in bit_config (number of bits for quantized experts)")
 
     # Quant
     parser.add_argument("--group_size", type=int, default=128)
@@ -61,17 +65,28 @@ def main():
     bit_assignments = assign_bits_from_usage(
         expert_counts=expert_counts,
         config_path=args.bit_config,
+        k_override=args.k,
+        low_bits_override=args.low_bits,
     )
 
     # --------------------------------------------------------
-    # 3. Build DeepSeek bitdict (NO shared / attn quant)
+    # 3. Build bitdict (NO shared / attn quant)
     # --------------------------------------------------------
-    print("\n🧩 Building DeepSeek bitdict...")
-    bitdict = build_deepseek_bitdict(
-        bit_assignments=bit_assignments,
-        num_layers=num_layers,
-        num_experts=num_experts
-    )
+    print("\n🧩 Building bitdict...")
+    if args.model_name.lower().find("deepseek") >= 0:
+        bitdict = build_deepseek_bitdict(
+            bit_assignments=bit_assignments,
+            num_layers=num_layers,
+            num_experts=num_experts,
+            quantize_threshold=9  # Only include bits <= 8 (skip 16-bit full precision)
+        )
+    elif args.model_name.lower().find("mixtral") >= 0:
+        bitdict = build_mixtral_bitdict(
+            bit_assignments=bit_assignments,
+            num_layers=num_layers,
+            num_experts=num_experts,
+            quantize_threshold=9  # Only include bits <= 8 (skip 16-bit full precision)
+        )
 
     print(f"Quantizing {len(bitdict)} tensors")
 
@@ -111,7 +126,7 @@ def main():
     model = AutoGPTQForCausalLM_mixed_precision.from_pretrained(
         args.model_name,
         quant_config,
-        torch_dtype=torch.float16,
+        torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
 

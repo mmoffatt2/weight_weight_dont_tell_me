@@ -71,10 +71,12 @@ def get_dataset_samples(name, tokenizer, seqlen, nsamples):
         text_list = [f"Q: {ex['question']}\nA: {ex['answer']}" for ex in subset]
 
     # --------------------------------------------------------------------------
-    # 3. WMT14 (translation)
+    # 3. WMT16 (translation)
     # --------------------------------------------------------------------------
-    elif name in ["wmt", "wmt14"]:
-        data = load_dataset("wmt14", "de-en", split="train")
+    elif name in ["wmt", "wmt16"]:
+        # Align all pipeline stages to use WMT16 German→English subset for consistency.
+        # If future expansion needed, allow direction override via name "wmt16-en-de" etc.
+        data = load_dataset("wmt16", "de-en", split="train")
         subset = safe_select(data, nsamples)
         text_list = [
             f"Translate from German to English:\nGerman: {ex['translation']['de']}\nEnglish: {ex['translation']['en']}"
@@ -113,6 +115,35 @@ def get_dataset_samples(name, tokenizer, seqlen, nsamples):
             f"Repository: {ex['repo']}\nIssue: {ex['problem_statement']}\nPatch:\n{ex['test_patch'][:400]}"
             for ex in subset
         ]
+
+    # --------------------------------------------------------------------------
+    # 7. HellaSwag (commonsense completion)
+    # --------------------------------------------------------------------------
+    elif name == "hellaswag":
+        data = load_dataset("hellaswag", split="validation")
+        subset = safe_select(data, nsamples)
+        text_list = []
+
+        for ex in subset:
+            ctx = ex.get("ctx") or ex.get("context") or ""
+            activity = ex.get("activity_label", "")
+
+            if activity:
+                ctx = f"Activity: {activity}\n{ctx}"
+
+            endings = ex.get("endings") or ex.get("ending_options") or []
+            endings = endings[:4]  # ensure length <= 4
+
+            labels = ["A", "B", "C", "D"]
+            choices = [f"({labels[i]}) {end}" for i, end in enumerate(endings)]
+
+            prompt = (
+                "Complete the description with the best ending.\n\n"
+                f"Context: {ctx}\n"
+                "Choices:\n" +
+                "\n".join(choices)
+            )
+            text_list.append(prompt)
 
     # Need to find proper dataset for AgentBench
     # # --------------------------------------------------------------------------
