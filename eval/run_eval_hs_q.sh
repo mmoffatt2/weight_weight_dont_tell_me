@@ -26,11 +26,11 @@ fi
 
 export HF_ALLOW_CODE_EVAL=1
 export HF_DATASETS_TRUST_REMOTE_CODE=true
-export HF_HOME="/scratch/cse585f25_class_root/cse585f25_class/tymiao/.cache"
-export HF_DATASETS_CACHE="${HF_HOME}/datasets"
+# export HF_HOME="/scratch/cse585f25_class_root/cse585f25_class/tymiao/.cache"
+# export HF_DATASETS_CACHE="${HF_HOME}/datasets"
 
 MODEL_NAME="deepseek-ai/deepseek-moe-16b-base"
-TASKS="hellaswag"
+TASKS="gsm8k"
 BATCH_SIZE=2
 LIMIT=5000
 
@@ -40,12 +40,12 @@ mkdir -p "${HF_DATASETS_CACHE}"
 echo "[`date '+%Y-%m-%d %H:%M:%S'`] Running lm_eval with model=${MODEL_NAME}, tasks=${TASKS}"
 
 uv run python run_lm_eval.py \
-    --model hf \
-    --model_args "pretrained=${MODEL_NAME},dtype=bfloat16,trust_remote_code=True" \
+    --model vllm \
+    --model_args "pretrained=${MODEL_NAME},dtype=bfloat16,trust_remote_code=True,gpu_memory_utilization=0.9,tensor_parallel_size=1" \
     --tasks "${TASKS}" \
-    --batch_size ${BATCH_SIZE} \
+    --batch_size auto \
     --limit ${LIMIT} \
-    --load_in_4bit
+    --trust_remote_code
 
 status=$?
 
