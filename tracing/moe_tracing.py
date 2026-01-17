@@ -22,7 +22,7 @@ from collections import defaultdict
 sys.path.insert(0, "./external/MoE-Quantization")
 
 import torch
-from utils.datasets_loader import get_dataset_samples, Dataset
+from datasets_loader import get_dataset_samples, Dataset
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import (
@@ -346,7 +346,7 @@ if __name__ == "__main__":
         help="Dataset name: wikitext2 | gsm8k | wmt14 | humaneval | ds1000 | swebench | agentbench",
     )
     parser.add_argument("--save_dir", type=str, default="./results", help="Directory to save routing data")
-    parser.add_argument("--nsamples", type=int, default=64, help="Number of random sequences to test")
+    parser.add_argument("--nsamples", type=int, default=2048, help="Number of random sequences to test")
     parser.add_argument("--seqlen", type=int, default=2048, help="Sequence length per sample")
     parser.add_argument("--batch_size", type=int, default=1, help="Batch size for inference")
 

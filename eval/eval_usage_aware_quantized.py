@@ -24,11 +24,18 @@ from typing import Dict, List
 sys.path.insert(0, "./external/MoE-Quantization")
 
 import torch
-from transformers import AutoTokenizer
-from auto_gptq import AutoGPTQForCausalLM_mixed_precision
+from transformers import AutoTokenizer, AutoModelForCausalLM
 from lm_eval import evaluator
 from lm_eval.models.huggingface import HFLM
-from lm_eval.tasks import initialize_tasks
+
+# Try to import auto_gptq, but handle gracefully if not available
+try:
+    from auto_gptq import AutoGPTQForCausalLM_mixed_precision
+
+    AUTO_GPTQ_AVAILABLE = True
+except ImportError:
+    AUTO_GPTQ_AVAILABLE = False
+    print("⚠️  auto_gptq not available. Will load models without quantization support.")
 
 
 # Task configurations for evaluation
@@ -152,46 +159,27 @@ def main():
     # --------------------------------------------------------
     # 1. Load model and tokenizer
     # --------------------------------------------------------
-    print(f"\n📥 Loading quantized model from {args.quant_model_path}")
+    print(f"\n📥 Loading model from {args.quant_model_path}")
     print(f"   Base model: {args.model_name}")
-
-    # Try to find a safetensors / quant file inside the provided quantized model dir
-    # AutoGPTQ expects a `model_basename` that matches the weight file prefix (without extension).
-    # The original code assumed the last path segment was the basename which fails when
-    # the safetensors file has a different name (e.g. `moe_usage_quantized.safetensors`).
-    quantized_model_file_base_name = None
-    if os.path.isdir(args.quant_model_path):
-        try:
-            dir_files = os.listdir(args.quant_model_path)
-        except Exception:
-            dir_files = []
-
-        # look for common quant file extensions
-        safetensors = [f for f in dir_files if f.endswith('.safetensors')]
-        other_bins = [f for f in dir_files if f.endswith('.pt') or f.endswith('.bin') or f.endswith('.pth')]
-        if safetensors:
-            quantized_model_file_base_name = os.path.splitext(safetensors[0])[0]
-        elif other_bins:
-            quantized_model_file_base_name = os.path.splitext(other_bins[0])[0]
-        else:
-            # fallback to directory name
-            quantized_model_file_base_name = os.path.basename(os.path.normpath(args.quant_model_path))
-    else:
-        # if a file path was given, strip extension
-        quantized_model_file_base_name = os.path.splitext(os.path.basename(args.quant_model_path))[0]
 
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
     # Allow code-eval tasks like HumanEval
     os.environ.setdefault("HF_ALLOW_CODE_EVAL", "1")
 
-    # Prefer tokenizer shipped with the quantized folder if present (many quantization
+    # Prefer tokenizer shipped with the model folder if present (many quantization
     # pipelines save tokenizer files alongside the weights). Otherwise, fall back to
     # the original base model name on the Hub.
     tokenizer_source = args.model_name
     if os.path.isdir(args.quant_model_path):
         has_tokenizer_files = any(
             os.path.exists(os.path.join(args.quant_model_path, t))
-            for t in ("tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "vocab.json", "merges.txt")
+            for t in (
+                "tokenizer.json",
+                "tokenizer_config.json",
+                "special_tokens_map.json",
+                "vocab.json",
+                "merges.txt",
+            )
         )
         if has_tokenizer_files:
             tokenizer_source = args.quant_model_path
@@ -204,18 +192,73 @@ def main():
     if not tokenizer.pad_token_id:
         tokenizer.pad_token_id = tokenizer.eos_token_id
 
-    model = AutoGPTQForCausalLM_mixed_precision.from_quantized(
-        args.quant_model_path,
-        low_cpu_mem_usage=True,
-        device_map="auto",
-        model_basename=quantized_model_file_base_name,
-        use_safetensors=True,
-        trust_remote_code=args.trust_remote_code,
-        inject_fused_mlp=False,
-        inject_fused_attention=False,
-    )
+    # Load model - try quantized if auto_gptq is available, otherwise load regular model
+    if AUTO_GPTQ_AVAILABLE:
+        print("   Using auto_gptq for quantized model loading")
+        # Try to find a safetensors / quant file inside the provided quantized model dir
+        # AutoGPTQ expects a `model_basename` that matches the weight file prefix (without extension).
+        # The original code assumed the last path segment was the basename which fails when
+        # the safetensors file has a different name (e.g. `moe_usage_quantized.safetensors`).
+        quantized_model_file_base_name = None
+        if os.path.isdir(args.quant_model_path):
+            try:
+                dir_files = os.listdir(args.quant_model_path)
+            except Exception:
+                dir_files = []
 
-    print("✓ Model loaded successfully")
+            # look for common quant file extensions
+            safetensors = [f for f in dir_files if f.endswith(".safetensors")]
+            other_bins = [
+                f
+                for f in dir_files
+                if f.endswith(".pt") or f.endswith(".bin") or f.endswith(".pth")
+            ]
+            if safetensors:
+                quantized_model_file_base_name = os.path.splitext(safetensors[0])[0]
+            elif other_bins:
+                quantized_model_file_base_name = os.path.splitext(other_bins[0])[0]
+            else:
+                # fallback to directory name
+                quantized_model_file_base_name = os.path.basename(
+                    os.path.normpath(args.quant_model_path)
+                )
+        else:
+            # if a file path was given, strip extension
+            quantized_model_file_base_name = os.path.splitext(
+                os.path.basename(args.quant_model_path)
+            )[0]
+
+        try:
+            model = AutoGPTQForCausalLM_mixed_precision.from_quantized(
+                args.quant_model_path,
+                low_cpu_mem_usage=True,
+                device_map="auto",
+                model_basename=quantized_model_file_base_name,
+                use_safetensors=True,
+                trust_remote_code=args.trust_remote_code,
+                inject_fused_mlp=False,
+                inject_fused_attention=False,
+            )
+            print("✓ Quantized model loaded successfully")
+        except Exception as e:
+            print(f"⚠️  Failed to load quantized model: {e}")
+            print("   Falling back to regular model loading...")
+            model = AutoModelForCausalLM.from_pretrained(
+                args.quant_model_path,
+                device_map="auto",
+                torch_dtype=torch.float16,
+                trust_remote_code=args.trust_remote_code,
+            )
+            print("✓ Regular model loaded successfully (quantization unavailable)")
+    else:
+        print("   Using regular model loading (auto_gptq not available)")
+        model = AutoModelForCausalLM.from_pretrained(
+            args.quant_model_path,
+            device_map="auto",
+            torch_dtype=torch.float16,
+            trust_remote_code=args.trust_remote_code,
+        )
+        print("✓ Regular model loaded successfully")
 
     # --------------------------------------------------------
     # 2. Parse task list (with alias expansion)
@@ -255,7 +298,8 @@ def main():
     print(f"\n⚡ Starting evaluation...\n")
 
     # Initialize task registry once (loads YAMLs under external/MoE-Quantization/lm_eval/tasks)
-    initialize_tasks(verbosity="INFO")
+    # Skip initialization as it's not available in current lm_eval version
+    print("⚠️  Skipping task registry initialization")
 
     all_metrics = {}
     results_per_task = {}
@@ -267,7 +311,12 @@ def main():
             task_kwargs = LM_EVAL_TASK_KWARGS_DICT[task_name].copy()
         else:
             # default behavior for unknown tasks: no few-shot by default, use global batch size
-            task_kwargs = {"task": task_name, "num_fewshot": 0, "batch_size": args.batch_size, "metric": None}
+            task_kwargs = {
+                "task": task_name,
+                "num_fewshot": 0,
+                "batch_size": args.batch_size,
+                "metric": None,
+            }
 
         # Override with command-line args if provided
         if args.num_fewshot is not None:
@@ -276,10 +325,16 @@ def main():
             task_kwargs["batch_size"] = args.batch_size
 
         print(f"📋 Evaluating: {task_name}")
-        print(f"   Fewshot: {task_kwargs['num_fewshot']}, Batch size: {task_kwargs['batch_size']}")
+        print(
+            f"   Fewshot: {task_kwargs['num_fewshot']}, Batch size: {task_kwargs['batch_size']}"
+        )
 
         try:
-            lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=task_kwargs["batch_size"])
+            lm = HFLM(
+                pretrained=model,
+                tokenizer=tokenizer,
+                batch_size=task_kwargs["batch_size"],
+            )
 
             # Use lm_eval evaluator to run the task. For unknown tasks we pass the task name directly
             # and rely on the harness to use sensible defaults.
@@ -323,8 +378,12 @@ def main():
             # Common cause: task name not registered. Provide a hint.
             msg = str(e)
             if "Missing task" in msg:
-                print("   ⚠️ Task not found in registry. Double-check the YAML name under external/MoE-Quantization/lm_eval/tasks.")
-                print("      If you added humaneval, use the exact task id from its YAML (e.g., 'humaneval' or 'humaneval_instruct').")
+                print(
+                    "   ⚠️ Task not found in registry. Double-check the YAML name under external/MoE-Quantization/lm_eval/tasks."
+                )
+                print(
+                    "      If you added humaneval, use the exact task id from its YAML (e.g., 'humaneval' or 'humaneval_instruct')."
+                )
             print(f"   ❌ Error evaluating {task_name}: {e}")
             continue
 

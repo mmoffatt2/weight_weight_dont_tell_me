@@ -26,12 +26,10 @@ fi
 
 export HF_ALLOW_CODE_EVAL=1
 export HF_DATASETS_TRUST_REMOTE_CODE=true
-export HF_HOME="/scratch/cse585f25_class_root/cse585f25_class/tymiao/.cache"
-export HF_DATASETS_CACHE="${HF_HOME}/datasets"
 
 MODEL_NAME="deepseek-ai/deepseek-moe-16b-base"
 TASKS="gsm8k"
-BATCH_SIZE=4
+BATCH_SIZE=16
 LIMIT=500
 TRACE_DATASET="gsm8k"
 OUTPUT_ROOT="runs/deepseek_moe_gsm8k_comparison"
@@ -85,7 +83,9 @@ uv run python pipeline.py \
     --eval_limit ${LIMIT} \
     --prune_strategy bottom_k \
     --prune_k 1 \
-    --skip_quant
+    --skip_quant \
+    --skip_trace \
+    --reuse_trace_data
 
 pruned_status=$?
 if [ ${pruned_status} -eq 0 ]; then

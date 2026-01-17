@@ -26,8 +26,6 @@ fi
 
 export HF_ALLOW_CODE_EVAL=1
 export HF_DATASETS_TRUST_REMOTE_CODE=true
-# export HF_HOME="/scratch/cse585f25_class_root/cse585f25_class/tymiao/.cache"
-# export HF_DATASETS_CACHE="${HF_HOME}/datasets"
 
 MODEL_NAME="deepseek-ai/deepseek-moe-16b-base"
 TASKS="gsm8k"

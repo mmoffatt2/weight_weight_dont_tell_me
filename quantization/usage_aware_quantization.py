@@ -14,10 +14,27 @@ from utils.datasets_loader import get_dataset_samples
 
 # ---- Optional MoE-Quantization import (Option A)
 sys.path.append("./external/MoE-Quantization")
-from auto_gptq import AutoGPTQForCausalLM_mixed_precision, BaseQuantizeConfig_mixed_precision
+try:
+    from auto_gptq import (
+        AutoGPTQForCausalLM_mixed_precision,
+        BaseQuantizeConfig_mixed_precision,
+    )
+
+    AUTO_GPTQ_AVAILABLE = True
+except ImportError as e:
+    AUTO_GPTQ_AVAILABLE = False
+    print(f"❌ auto_gptq not available: {e}")
+    print("   Quantization cannot proceed without auto_gptq.")
+    print("   Please install auto_gptq or run with --skip_quant")
 
 
 def main():
+    # Check if auto_gptq is available before proceeding
+    if not AUTO_GPTQ_AVAILABLE:
+        print("\n❌ Cannot proceed with quantization: auto_gptq is not available")
+        print("   Install auto_gptq or run pipeline with --skip_quant")
+        sys.exit(1)
+
     parser = argparse.ArgumentParser("MoE Usage-Aware Quantizer")
 
     # Model + files
@@ -34,16 +51,29 @@ def main():
 
     # Bit assignment
     parser.add_argument("--bit_config", type=str, default="configs/bit_assign.yaml")
-    parser.add_argument("--k", type=int, default=None, 
-                        help="Override k in bit_config for global_bottom_k mode (number of experts to quantize)")
-    parser.add_argument("--low-bits", type=int, default=None,
-                        help="Override low_bits in bit_config (number of bits for quantized experts)")
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=None,
+        help="Override k in bit_config for global_bottom_k mode (number of experts to quantize)",
+    )
+    parser.add_argument(
+        "--low-bits",
+        type=int,
+        default=None,
+        help="Override low_bits in bit_config (number of bits for quantized experts)",
+    )
 
     # Quant
     parser.add_argument("--group_size", type=int, default=128)
 
     # Debug
-    parser.add_argument("--inspect-dataset", action=argparse.BooleanOptionalAction, default=True, help="Enable or disable calibration dataset inspection")
+    parser.add_argument(
+        "--inspect-dataset",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable or disable calibration dataset inspection",
+    )
 
     args = parser.parse_args()
 
@@ -78,14 +108,14 @@ def main():
             bit_assignments=bit_assignments,
             num_layers=num_layers,
             num_experts=num_experts,
-            quantize_threshold=9  # Only include bits <= 8 (skip 16-bit full precision)
+            quantize_threshold=9,  # Only include bits <= 8 (skip 16-bit full precision)
         )
     elif args.model_name.lower().find("mixtral") >= 0:
         bitdict = build_mixtral_bitdict(
             bit_assignments=bit_assignments,
             num_layers=num_layers,
             num_experts=num_experts,
-            quantize_threshold=9  # Only include bits <= 8 (skip 16-bit full precision)
+            quantize_threshold=9,  # Only include bits <= 8 (skip 16-bit full precision)
         )
 
     print(f"Quantizing {len(bitdict)} tensors")

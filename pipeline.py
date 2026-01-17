@@ -50,7 +50,12 @@ def main():
 
     # ---- Eval (lm_eval)
     parser.add_argument("--eval_tasks", type=str, default="wikitext")
-    parser.add_argument("--eval_batch_size", type=int, default=8)
+    parser.add_argument(
+        "--eval_batch_size",
+        type=int,
+        default=32,
+        help="Batch size for evaluation (higher for vLLM)",
+    )
     parser.add_argument("--eval_limit", type=int, default=None)
     parser.add_argument("--num_fewshot", type=int, default=0)
 
@@ -73,6 +78,12 @@ def main():
         type=str,
         default=None,
         help="Dataset for usage-based pruning (falls back to --trace_dataset)",
+    )
+    parser.add_argument(
+        "--reuse_trace_data",
+        action="store_true",
+        default=False,
+        help="Reuse existing trace data for pruning (use with --skip_trace)",
     )
 
     # ---- Control flags
@@ -121,7 +132,21 @@ def main():
     run_dir = Path(args.output_root) / run_dir_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    expert_counts = run_dir / f"{model_short}_expert_counts.pt"
+    # When skipping trace, reuse existing expert counts from baseline run
+    if args.skip_trace and args.reuse_trace_data:
+        baseline_dir = (
+            Path(args.output_root)
+            / f"{model_short}_{args.trace_dataset}_{k_experts_to_quant}experts"
+        )
+        expert_counts = baseline_dir / f"{model_short}_expert_counts.pt"
+        if not expert_counts.exists():
+            print(f"❌ Cannot find expert counts at {expert_counts}")
+            print("   Run baseline evaluation first or remove --skip_trace")
+            sys.exit(1)
+        print(f"📊 Reusing existing trace data from {baseline_dir}")
+    else:
+        expert_counts = run_dir / f"{model_short}_expert_counts.pt"
+
     prune_out = run_dir / "pruned"
     quant_out = run_dir / "quantized"
 
@@ -225,35 +250,67 @@ def main():
     if not args.skip_eval:
         # Determine which model to use for evaluation
         model_for_eval = args.model_name
+        quant_model_path_for_eval = str(quant_out)
+
         if pruning_enabled and not args.skip_quant:
             # Pruning + quantization
-            model_for_eval = str(quant_out)
+            model_for_eval = str(prune_out)  # Use pruned model as base
+            quant_model_path_for_eval = str(quant_out)
         elif pruning_enabled and args.skip_quant:
             # Pruning only, no quantization
             model_for_eval = str(prune_out)
+            quant_model_path_for_eval = str(prune_out)  # Use same path for consistency
         elif not pruning_enabled and not args.skip_quant:
             # Quantization only
-            model_for_eval = str(quant_out)
+            model_for_eval = args.model_name
+            quant_model_path_for_eval = str(quant_out)
         # else: neither pruning nor quantization, use original model
 
-        eval_cmd = [
-            sys.executable,
-            "eval/eval_usage_aware_quantized.py",
-            "--model_name",
-            model_for_eval,
-            "--quant_model_path",
-            str(quant_out),
-            "--tasks",
-            args.eval_tasks,
-            "--batch_size",
-            str(args.eval_batch_size),
-        ]
-        # Only add num_fewshot if explicitly set
-        if args.num_fewshot is not None:
-            eval_cmd.extend(["--num_fewshot", str(args.num_fewshot)])
-        eval_cmd.extend(["--output_dir", str(run_dir)])
+        # Use vLLM for faster evaluation whenever possible
+        if args.skip_quant or (not pruning_enabled and args.skip_quant):
+            # For baseline and pruning-only cases, use vLLM for much faster evaluation
+            eval_cmd = [
+                sys.executable,
+                "eval/run_lm_eval.py",
+                "--model",
+                "vllm",
+                "--model_args",
+                f"pretrained={model_for_eval},trust_remote_code=True,tensor_parallel_size=1,gpu_memory_utilization=0.9,max_model_len=4096",
+                "--tasks",
+                args.eval_tasks,
+                "--batch_size",
+                str(args.eval_batch_size),
+                "--trust_remote_code",
+            ]
+            # Only add num_fewshot if explicitly set
+            if args.num_fewshot is not None:
+                eval_cmd.extend(["--num_fewshot", str(args.num_fewshot)])
+            if args.eval_limit is not None:
+                eval_cmd.extend(["--limit", str(args.eval_limit)])
 
-        run(eval_cmd, "Running usage-aware evaluation")
+            run(eval_cmd, "Running vLLM evaluation (non-quantized)")
+        else:
+            # For quantized models, use the specialized evaluation script
+            eval_cmd = [
+                sys.executable,
+                "eval/eval_usage_aware_quantized.py",
+                "--model_name",
+                model_for_eval,
+                "--quant_model_path",
+                quant_model_path_for_eval,
+                "--tasks",
+                args.eval_tasks,
+                "--batch_size",
+                str(args.eval_batch_size),
+            ]
+            # Only add num_fewshot if explicitly set
+            if args.num_fewshot is not None:
+                eval_cmd.extend(["--num_fewshot", str(args.num_fewshot)])
+            if args.eval_limit is not None:
+                eval_cmd.extend(["--limit", str(args.eval_limit)])
+            eval_cmd.extend(["--output_dir", str(run_dir)])
+
+            run(eval_cmd, "Running usage-aware evaluation")
 
     print("\n✅ Pipeline complete.")
 
