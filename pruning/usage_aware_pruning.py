@@ -10,8 +10,6 @@ from typing import Dict, Set, Optional, Union, List
 
 # ---- Add parent directory to path for imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "pruning_example"))
-
 
 def load_expert_counts_and_select_bottom_k(
     expert_counts_path: str, top_k: int
