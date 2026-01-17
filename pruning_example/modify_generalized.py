@@ -551,6 +551,56 @@ def load_expert_counts_and_select_bottom_k(expert_counts_path: str, top_k: int) 
     return layer_specific_experts
 
 
+def load_expert_counts_and_select_top_k(expert_counts_path: str, top_k: int) -> Dict[int, Set[int]]:
+    """
+    Load expert counts and select TOP-k most used experts per layer.
+    """
+    import torch
+
+    print(f"\n📊 Loading expert counts from: {expert_counts_path}")
+    expert_counts = torch.load(expert_counts_path, map_location="cpu")
+
+    num_layers, num_experts = expert_counts.shape
+    print(f"   Shape: [{num_layers} layers × {num_experts} experts]")
+    print(f"   Will remove TOP {top_k} most-used experts from each layer")
+
+    layer_specific_experts = {}
+
+    for layer_idx in range(num_layers):
+        layer_counts = expert_counts[layer_idx]
+
+        if layer_counts.sum() == 0:
+            print(f"   Layer {layer_idx}: No routing detected, skipping")
+            continue
+        
+        sorted_indices = torch.argsort(layer_counts, descending=True)
+        experts_to_remove = sorted_indices[:top_k].tolist()
+
+        removed_usages = [layer_counts[i].item() for i in experts_to_remove]
+        print(f"   Layer {layer_idx}: Remove experts {experts_to_remove} (usage: {removed_usages})")
+
+        layer_specific_experts[layer_idx] = experts_to_remove
+
+    return layer_specific_experts
+
+
+def select_random_experts(num_layers: int, num_experts: int, k: int) -> Dict[int, Set[int]]:
+    """
+    Randomly remove k experts per layer.
+    """
+    import torch
+    print(f"\n🎲 Random pruning: removing {k} random experts per layer")
+
+    layer_specific_experts = {}
+
+    for layer_idx in range(num_layers):
+        idx = torch.randperm(num_experts)[:k].tolist()
+        layer_specific_experts[layer_idx] = idx
+        print(f"   Layer {layer_idx}: Randomly removing experts {idx}")
+
+    return layer_specific_experts
+
+
 def generate_expert_counts_via_tracing(model_name: str, dataset: str, save_dir: str) -> str:
     """
     Run tracing/moe_tracing.py to generate expert_counts for the given model and dataset,
@@ -779,6 +829,56 @@ def run_lm_eval_for_dataset(model_dir: str, dataset: Optional[str], limit: Optio
         traceback.print_exc()
         return
 
+def trace_modified_model(model_path: str, model_name: str, dataset: str):
+    """
+    Run moe_tracing.py on the newly saved model.
+    Saves the output expert_counts to model_path.
+    """
+
+    if not dataset:
+        print("ℹ️ No dataset provided -- skipping post-pruning tracing.")
+        return None
+
+    print("\n" + "=" * 80)
+    print("🚀 Running tracing on pruned model...")
+    print("=" * 80)
+
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    tracer_script = os.path.join(project_root, "tracing", "moe_tracing.py")
+
+    save_dir = model_path  # Save expert_counts inside the pruned model directory
+
+    cmd = [
+        "python3", tracer_script,
+        "--model_name", model_name,
+        "--model_path", model_path,
+        "--dataset", dataset,
+        "--save_dir", save_dir,
+        "--nsamples", "64",
+        "--seqlen", "2048",
+        "--batch_size", "1",
+    ]
+
+    env = os.environ.copy()
+    env["PYTHONPATH"] = f"{project_root}:{env.get('PYTHONPATH', '')}"
+
+    print("Command:")
+    print(" ".join(cmd))
+
+    try:
+        subprocess.run(
+            cmd,
+            env=env,
+            cwd=project_root,
+            check=True
+        )
+        print(f"✅ Tracing complete! expert_counts saved to: {save_dir}")
+        return os.path.join(save_dir, f"{model_name.split('/')[-1]}_expert_counts.pt")
+
+    except subprocess.CalledProcessError as e:
+        print("❌ Tracing failed!")
+        print(e)
+        return None
 
 def main():
     """Example usage with different modes"""
@@ -811,9 +911,9 @@ def main():
     parser.add_argument(
         "--mode",
         type=str,
-        choices=["usage-based", "manual"],
+        choices=["usage-based", "manual", "most-used", "random"],
         default="manual",
-        help="Mode: 'usage-based' uses expert counts, 'manual' uses hardcoded config",
+        help="Pruning mode",
     )
     parser.add_argument(
         "--dataset",
@@ -869,6 +969,82 @@ def main():
         print("Usage-Based Expert Removal")
         print("=" * 60)
         
+        modifier = MoEModifierMemoryEfficient(
+            model_name=MODEL_NAME,
+            layer_specific_experts=layer_specific_experts,
+        )
+
+    elif args.mode == "most-used":
+        if args.top_k is None:
+            print("❌ Error: --top-k is required for most-used mode")
+            return 1
+
+        counts_path = args.expert_counts
+        if not counts_path:
+            # Auto-generate counts via tracing
+            if not args.dataset:
+                print("❌ Error: Provide --expert-counts or specify --dataset to auto-generate counts via tracing")
+                return 1
+            try:
+                counts_path = generate_expert_counts_via_tracing(
+                    MODEL_NAME, args.dataset, OUTPUT_DIR
+                )
+            except Exception:
+                return 1
+
+        # Load expert counts and generate layer-specific removal (most-used)
+        layer_specific_experts = load_expert_counts_and_select_top_k(
+            counts_path,
+            args.top_k,
+        )
+
+        print("\n" + "=" * 60)
+        print("Most-Used Expert Removal (top-k most-used experts)")
+        print("=" * 60)
+
+        modifier = MoEModifierMemoryEfficient(
+            model_name=MODEL_NAME,
+            layer_specific_experts=layer_specific_experts,
+        )
+
+    elif args.mode == "random":
+        if args.top_k is None:
+            print("❌ Error: --top-k is required for random mode")
+            return 1
+
+        # Need num_layers and num_experts from config
+        cfg = AutoConfig.from_pretrained(MODEL_NAME, trust_remote_code=True)
+
+        # DeepSeek-style: n_routed_experts and num_hidden_layers / n_layers
+        if hasattr(cfg, "n_routed_experts"):
+            num_experts = cfg.n_routed_experts
+        elif hasattr(cfg, "num_experts"):
+            num_experts = cfg.num_experts
+        else:
+            raise ValueError("Config has no n_routed_experts/num_experts; cannot do random pruning")
+
+        if hasattr(cfg, "num_hidden_layers"):
+            num_layers = cfg.num_hidden_layers
+        elif hasattr(cfg, "n_layers"):
+            num_layers = cfg.n_layers
+        else:
+            raise ValueError("Config has no num_hidden_layers/n_layers; cannot do random pruning")
+
+        if args.top_k > num_experts:
+            raise ValueError(
+                f"--top-k ({args.top_k}) cannot exceed num_experts per layer ({num_experts})"
+            )
+
+        layer_specific_experts = select_random_experts(
+            num_layers=num_layers,
+            num_experts=num_experts,
+            k=args.top_k,
+        )
+
+        print("\n" + "=" * 60)
+        print("Random Expert Removal (k random experts per layer)")
+        print("=" * 60)
+
         modifier = MoEModifierMemoryEfficient(
             model_name=MODEL_NAME,
             layer_specific_experts=layer_specific_experts,
@@ -981,6 +1157,27 @@ def main():
     # gc.collect()
 
     print("\n🎉 Done! Modified model saved to:", OUTPUT_DIR)
+
+    # =====================================================
+    # 🚀 RUN TRACING AFTER PRUNING (AUTO)
+    # =====================================================
+    if args.dataset:
+        print("\n" + "=" * 80)
+        print("🔍 Auto-tracing modified model using the provided dataset...")
+        print("=" * 80)
+
+        trace_result = trace_modified_model(
+            model_path=OUTPUT_DIR,
+            model_name=args.model_name,
+            dataset=args.dataset
+        )
+
+        if trace_result:
+            print(f"📊 New expert count file generated at: {trace_result}")
+        else:
+            print("⚠️ Tracing did not complete successfully.")
+    else:
+        print("ℹ️ Skipping auto-tracing (no --dataset provided).")
 
     # ------------------------------------------------------------------
     # Optional: run lm_eval on the saved model for the provided dataset

@@ -19,33 +19,63 @@ def main():
     # ---- Core
     parser.add_argument("--model_name", type=str, required=True)
     parser.add_argument("--output_root", type=str, default="runs")
+    parser.add_argument("--dataset", type=str, default="wikitext2")
 
     # ---- Tracing
-    parser.add_argument("--trace_dataset", type=str, default="wikitext2")
+    parser.add_argument("--trace_dataset", type=str, default=None, help="Falls back to --dataset if not set")
     parser.add_argument("--trace_nsamples", type=int, default=64)
     parser.add_argument("--trace_seqlen", type=int, default=2048)
     parser.add_argument("--trace_batch_size", type=int, default=1)
-    parser.add_argument(
-        "--trace_config", type=str, default="configs/moe_model_metadata.json"
-    )
+    parser.add_argument("--trace_config", type=str, default="configs/moe_model_metadata.json")
 
-    # ---- Quant
-    parser.add_argument("--quant_dataset", type=str, default="wikitext2")
+    # ---- Pruning and Quantization
+    parser.add_argument(
+        "--strategy",
+        type=str,
+        choices=["bottom_k", "top_k", "random_k"],
+        default=None,
+        help="Whether we use the bottom_k, top_k, or random_k experts when pruning/quantizing" \
+        "bottom_k is the least used experts, top_k is the most used experts",
+    )
+    parser.add_argument("--k", type=int, default=None, help="Number of experts to prune/quantize")
+
+    # ---- Pruning
+    parser.add_argument("--prune", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--prune_dataset", type=str, default=None, help="Falls back to --dataset if not set")
+    # parser.add_argument(
+    #     "--prune_strategy",
+    #     type=str,
+    #     choices=["bottom_k", "top_k", "random_k"],
+    #     default=None,
+    #     help="Whether we use the bottom_k, top_k, or random_k experts when pruning. Falls back to --strategy if not set",
+    # )
+    # parser.add_argument("--prune_k", type=int, default=None, help="Override k for pruning (if different from quantization). Falls back to --k if not set")
+
+    # ---- Quantization
+    parser.add_argument("--quantize", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--quant_dataset", type=str, default=None, help="Falls back to --dataset if not set")
+    # parser.add_argument(
+    #     "--quant_strategy",
+    #     type=str,
+    #     choices=["bottom_k", "top_k", "random_k"],
+    #     default=None,
+    #     help="Whether we use the bottom_k, top_k, or random_k experts when quantizing. Falls back to --strategy if not set",
+    # )
+    # parser.add_argument("--quant_k", type=int, default=None, help="Override k for quantization (if different from pruning). Falls back to --k if not set")
     parser.add_argument("--quant_nsamples", type=int, default=256)
     parser.add_argument("--quant_seqlen", type=int, default=2048)
     parser.add_argument("--group_size", type=int, default=128)
-    parser.add_argument("--bit_config", type=str, default="configs/bit_assign.yaml")
-    parser.add_argument(
-        "--top-k",
-        type=int,
-        default=None,
-        help="Number of lowest-usage experts to quantize (overrides k in bit_assign.yaml)",
-    )
     parser.add_argument(
         "--low-bits",
         type=int,
-        default=None,
-        help="Number of bits for low-precision experts (overrides low_bits in bit_assign.yaml)",
+        default=8,
+        help="Number of bits for low-precision experts",
+    )
+    parser.add_argument(
+        "--high-bits",
+        type=int,
+        default=16,
+        help="Number of bits for high-precision experts (default full precision)",
     )
 
     # ---- Eval (lm_eval)
@@ -54,81 +84,52 @@ def main():
     parser.add_argument("--eval_limit", type=int, default=None)
     parser.add_argument("--num_fewshot", type=int, default=0)
 
-    # ---- Pruning
-    parser.add_argument(
-        "--prune_strategy",
-        type=str,
-        choices=["bottom_k", "top_k", "random"],
-        default=None,
-        help="Pruning strategy: bottom_k, top_k, or random",
-    )
-    parser.add_argument(
-        "--prune_k",
-        type=int,
-        default=None,
-        help="Number of experts to remove per layer",
-    )
-    parser.add_argument(
-        "--prune_dataset",
-        type=str,
-        default=None,
-        help="Dataset for usage-based pruning (falls back to --trace_dataset)",
-    )
-
     # ---- Control flags
     parser.add_argument(
         "--skip_trace", action=argparse.BooleanOptionalAction, default=False
     )
     parser.add_argument(
-        "--skip_quant", action=argparse.BooleanOptionalAction, default=False
-    )
-    parser.add_argument(
         "--skip_eval", action=argparse.BooleanOptionalAction, default=False
-    )
-    parser.add_argument(
-        "--skip_prune", action=argparse.BooleanOptionalAction, default=False
     )
 
     args = parser.parse_args()
 
     model_short = args.model_name.split("/")[-1]
 
-    # Load bit config to get k value
-    import yaml
-
-    with open(args.bit_config, "r") as f:
-        bit_config = yaml.safe_load(f)
-
-    # Determine k: use --top-k if provided, otherwise use k from config
-    if args.top_k is not None:
-        k_experts_to_quant = args.top_k
-    else:
-        k_experts_to_quant = bit_config.get("global_bottom_k", {}).get("k", 0)
-
-    # Determine if pruning is enabled
-    pruning_enabled = (
-        args.prune_strategy is not None
-        and args.prune_k is not None
-        and not args.skip_prune
-    )
+    # if args.prune:
+    #     if args.k is None and args.prune_k is None:
+    #         raise ValueError("You must specify the k number of experts to prune")
+    #     if args.strategy is None and args.prune_strategy is None:
+    #         raise ValueError("You must specify a strategy for pruning (bottom_k, top_k, random_k)")
+    # if args.quantize:
+    #     if args.k is None and args.quant_k is None:
+    #         raise ValueError("You must specify the k number of experts to quantize")
+    #     if args.strategy is None and args.quant_strategy is None:
+    #         raise ValueError("You must specify a strategy for quantization (bottom_k, top_k, random_k)")
+    if args.k is None:
+        raise ValueError("You must specify the k number of experts to prune/quantize")
+    if args.strategy is None:
+        raise ValueError("You must specify a strategy for pruning/quantization (bottom_k, top_k, random_k)")
 
     # Build run directory name with dataset and expert info
-    if pruning_enabled:
-        run_dir_name = f"{model_short}_{args.trace_dataset}_{args.prune_k}experts_{args.prune_strategy}"
-    else:
-        run_dir_name = f"{model_short}_{args.trace_dataset}_{k_experts_to_quant}experts"
+    # TODO: if specific dataset args are set, might want to include those in the name
+    run_dir_name = f"{model_short}_{args.dataset}_{args.k}experts_{args.strategy}"
 
     run_dir = Path(args.output_root) / run_dir_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
     expert_counts = run_dir / f"{model_short}_expert_counts.pt"
-    prune_out = run_dir / "pruned"
-    quant_out = run_dir / "quantized"
+    if args.prune:
+        prune_out = run_dir / "pruned"
+    if args.quantize:
+        quant_out = run_dir / "quantized"
 
     # -----------------------------------------------------
     # 1. Tracing (moe_tracing.py)
     # -----------------------------------------------------
     if not args.skip_trace:
+        # Use trace_dataset if provided, otherwise fall back to dataset
+        trace_dataset = args.dataset if args.trace_dataset is None else args.trace_dataset
         run(
             [
                 sys.executable,
@@ -138,7 +139,7 @@ def main():
                 "--config_path",
                 args.trace_config,
                 "--dataset",
-                args.trace_dataset,
+                trace_dataset,
                 "--seqlen",
                 str(args.trace_seqlen),
                 "--nsamples",
@@ -152,108 +153,106 @@ def main():
         )
 
     # -----------------------------------------------------
-    # 2. Pruning (optional)
+    # 2. Pruning
     # -----------------------------------------------------
-    if pruning_enabled:
-        # Use prune_dataset if provided, otherwise fall back to trace_dataset
-        prune_dataset = args.prune_dataset or args.trace_dataset
+    if args.prune:
+        # Use prune_dataset if provided, otherwise fall back to dataset
+        prune_dataset = args.dataset if args.prune_dataset is None else args.prune_dataset
 
         prune_cmd = [
             sys.executable,
             "pruning/usage_aware_pruning.py",
             "--model_name",
             args.model_name,
+            "--dataset",
+            prune_dataset,
             "--strategy",
-            args.prune_strategy,
+            args.strategy,
             "--k",
-            str(args.prune_k),
+            str(args.k),
             "--output_dir",
             str(prune_out),
         ]
 
-        # Add expert_counts if available (for bottom_k and top_k strategies)
-        if args.prune_strategy in ["bottom_k", "top_k"] and expert_counts.exists():
-            prune_cmd.extend(["--expert_counts", str(expert_counts)])
-        elif args.prune_strategy in ["bottom_k", "top_k"]:
-            prune_cmd.extend(["--dataset", prune_dataset])
+        # TODO: not sure what this code is supposed to be doing
+        # # Add expert_counts if available (for bottom_k and top_k strategies)
+        # if args.prune_strategy in ["bottom_k", "top_k"] and expert_counts.exists():
+        #     prune_cmd.extend(["--expert_counts", str(expert_counts)])
+        # elif args.prune_strategy in ["bottom_k", "top_k"]:
+        #     prune_cmd.extend(["--dataset", prune_dataset])
 
-        run(prune_cmd, f"Running {args.prune_strategy} pruning")
+        run(prune_cmd, f"Running {args.strategy} pruning")
 
     # -----------------------------------------------------
     # 3. Quantization
     # -----------------------------------------------------
-    if not args.skip_quant:
-        # Determine which model to use for quantization
-        model_for_quant = args.model_name
-        if pruning_enabled:
-            model_for_quant = str(prune_out)
-
+    if args.quantize:
+        # Use quant_dataset if provided, otherwise fall back to dataset
+        quant_dataset = args.dataset if args.quant_dataset is None else args.quant_dataset
         quant_cmd = [
             sys.executable,
             "quantization/usage_aware_quantization.py",
             "--model_name",
-            model_for_quant,
+            args.model_name,
             "--expert_counts",
             str(expert_counts),
             "--output_dir",
             str(quant_out),
             "--dataset",
-            args.quant_dataset,
+            quant_dataset,
             "--seqlen",
             str(args.quant_seqlen),
             "--nsamples",
             str(args.quant_nsamples),
             "--group_size",
             str(args.group_size),
-            "--bit_config",
-            args.bit_config,
+            "--k",
+            str(args.k),
+            "--low-bits", 
+            str(args.low_bits),
+            "--high-bits", 
+            str(args.high_bits),
+            "--strategy", 
+            args.strategy,
         ]
 
-        # Add --k override if provided
-        if args.top_k is not None:
-            quant_cmd.extend(["--k", str(args.top_k)])
-
-        # Add --low-bits override if provided
-        if args.low_bits is not None:
-            quant_cmd.extend(["--low-bits", str(args.low_bits)])
-
-        run(quant_cmd, "Running usage-aware quantization")
+        run(quant_cmd, f"Running {args.strategy} quantization")
 
     # -----------------------------------------------------
     # 4. Evaluation (lm_eval)
     # -----------------------------------------------------
     if not args.skip_eval:
-        # Determine which model to use for evaluation
-        model_for_eval = args.model_name
-        if pruning_enabled and not args.skip_quant:
-            # Pruning + quantization
-            model_for_eval = str(quant_out)
-        elif pruning_enabled and args.skip_quant:
-            # Pruning only, no quantization
-            model_for_eval = str(prune_out)
-        elif not pruning_enabled and not args.skip_quant:
+        model_paths = []
+
+        if args.prune:
+            # Pruning (with or without quantization)
+            model_paths.append(str(prune_out))
+        if args.quantize:
             # Quantization only
-            model_for_eval = str(quant_out)
-        # else: neither pruning nor quantization, use original model
+            model_paths.append(str(quant_out))
 
-        eval_cmd = [
-            sys.executable,
-            "eval/eval_usage_aware_quantized.py",
-            "--model_name",
-            model_for_eval,
-            "--quant_model_path",
-            str(quant_out),
-            "--tasks",
-            args.eval_tasks,
-            "--batch_size",
-            str(args.eval_batch_size),
-        ]
-        # Only add num_fewshot if explicitly set
-        if args.num_fewshot is not None:
-            eval_cmd.extend(["--num_fewshot", str(args.num_fewshot)])
-        eval_cmd.extend(["--output_dir", str(run_dir)])
+        if not model_paths:
+            print("No models found for evaluation (neither pruning nor quantization was run). Skipping eval.")
+            return
+        for model_path in model_paths:
+            eval_cmd = [
+                sys.executable,
+                "eval/eval_usage_aware_quantized.py",
+                "--model_name",
+                args.model_name,
+                "--model_path",
+                model_path,
+                "--tasks",
+                args.eval_tasks,
+                "--batch_size",
+                str(args.eval_batch_size),
+            ]
+            # Only add num_fewshot if explicitly set
+            if args.num_fewshot is not None:
+                eval_cmd.extend(["--num_fewshot", str(args.num_fewshot)])
+            eval_cmd.extend(["--output_dir", str(run_dir)])
 
-        run(eval_cmd, "Running usage-aware evaluation")
+            run(eval_cmd, "Running usage-aware evaluation")
 
     print("\n✅ Pipeline complete.")
 
