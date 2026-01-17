@@ -12,7 +12,7 @@ from quantization.calibration_inspector import inspect_calibration_dataset
 from quantization.build_bitdict import build_deepseek_bitdict, build_mixtral_bitdict
 from utils.datasets_loader import get_dataset_samples
 
-# ---- Optional MoE-Quantization import (Option A)
+# ---- MoE-Quantization import
 sys.path.append("./external/MoE-Quantization")
 from auto_gptq import AutoGPTQForCausalLM_mixed_precision, BaseQuantizeConfig_mixed_precision
 
@@ -25,7 +25,7 @@ def main():
     # Expert counts file (...expert_counts.pt)
     parser.add_argument("--expert_counts", type=str, required=True)
     # Quantized model output directory
-    parser.add_argument("--output_dir", type=str, default="./moe_usage_quantized_model")
+    parser.add_argument("--output_dir", type=str, required=True)
 
     # Calibration dataset
     parser.add_argument("--dataset", type=str, default="wikitext2")
@@ -33,11 +33,14 @@ def main():
     parser.add_argument("--nsamples", type=int, default=256)
 
     # Bit assignment
-    parser.add_argument("--bit_config", type=str, default="configs/bit_assign.yaml")
-    parser.add_argument("--k", type=int, default=None, 
-                        help="Override k in bit_config for global_bottom_k mode (number of experts to quantize)")
-    parser.add_argument("--low-bits", type=int, default=None,
-                        help="Override low_bits in bit_config (number of bits for quantized experts)")
+    parser.add_argument("--k", type=int, required=True, 
+                        help="Number of experts to quantize")
+    parser.add_argument("--low-bits", type=int, required=True,
+                        help="Number of bits for quantized experts")
+    parser.add_argument("--high-bits", type=int, default=16,
+                        help="Number of bits for non-quantized experts")
+    parser.add_argument("--strategy", type=str, choices=["bottom_k", "top_k", "random_k"],
+                        help="Strategy for selecting experts to quantize")
 
     # Quant
     parser.add_argument("--group_size", type=int, default=128)
@@ -52,7 +55,7 @@ def main():
     # --------------------------------------------------------
     # 1. Load routing usage
     # --------------------------------------------------------
-    print(f"\n📥 Loading expert counts: {args.expert_counts}")
+    print(f"\n Loading expert counts: {args.expert_counts}")
     expert_counts = torch.load(args.expert_counts)
 
     num_layers, num_experts = expert_counts.shape
@@ -61,18 +64,19 @@ def main():
     # --------------------------------------------------------
     # 2. Assign bits
     # --------------------------------------------------------
-    print("\n🧠 Assigning bits from usage...")
+    print("\n Assigning bits from usage...")
     bit_assignments = assign_bits_from_usage(
         expert_counts=expert_counts,
-        config_path=args.bit_config,
-        k_override=args.k,
-        low_bits_override=args.low_bits,
+        K=args.k,
+        low_bits=args.low_bits,
+        high_bits=args.high_bits,
+        strategy=args.strategy,
     )
 
     # --------------------------------------------------------
     # 3. Build bitdict (NO shared / attn quant)
     # --------------------------------------------------------
-    print("\n🧩 Building bitdict...")
+    print("\n Building bitdict...")
     if args.model_name.lower().find("deepseek") >= 0:
         bitdict = build_deepseek_bitdict(
             bit_assignments=bit_assignments,
