@@ -199,10 +199,10 @@ def dump_routing_trace(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Minimal MoE Router Tracing Utility")
-    parser.add_argument("--model_name", type=str, required=True, help="HuggingFace model ID")
+    parser.add_argument("--model_name", type=str, default="deepseek-ai/deepseek-moe-16b-base", help="HuggingFace model ID")
     parser.add_argument("--model_path", type=str, default=None, help="Local model path (optional)")
     parser.add_argument("--config_path", type=str, default="configs/moe_model_metadata.json")
-    parser.add_argument("--dataset", type=str, default="wikitext2")
+    parser.add_argument("--dataset", type=str, default="gsm8k")
     parser.add_argument("--save_dir", type=str, default="./results")
     parser.add_argument("--nsamples", type=int, default=2048)
     parser.add_argument("--seqlen", type=int, default=2048)
